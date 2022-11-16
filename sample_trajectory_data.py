@@ -108,18 +108,29 @@ class MapNavigator:
             geodesics = [np.hstack(
                 (path[idx-1], habitat_sim.utils.common.quat_to_coeffs(agent_rotation))
             )]
-            observations = [self.sim.get_sensor_observations()['mid_depth']]
+            # observations = [self.sim.get_sensor_observations()['mid_depth']]
+            initial_sensor_obs = self.sim.get_sensor_observations()
+            initial_obs = np.stack([
+                initial_sensor_obs['left_depth'],
+                initial_sensor_obs['mid_depth'],
+                initial_sensor_obs['right_depth']
+            ])
+            observations = [initial_obs]
+
             for action_idx in range(len(actions) - 1):
                 obs = self.sim.step(actions[action_idx])
+                sensor_obs = np.stack([obs['left_depth'], obs['mid_depth'], obs['right_depth']], axis=0)
                 state = self.sim.get_agent(0).state
                 position = np.array(mesh2MapFrame(state.position))
                 rotation = mesh2MapFrameQuaternion(state.rotation)
                 pose = np.hstack((position, habitat_sim.utils.common.quat_to_coeffs(rotation)))
                 geodesics.append(pose)
-                observations.append(obs['mid_depth'])
+                # observations.append(obs['mid_depth'])
+                observations.append(sensor_obs)
 
             observations = np.array(observations)
-            observations = np.expand_dims(observations, axis=0) if len(observations.shape) == 2 else observations
+            # observations = np.expand_dims(observations, axis=0) if len(observations.shape) == 2 else observations
+            observations = np.expand_dims(observations, axis=0) if len(observations.shape) == 3 else observations
             path_data.append(geodesics)
             obs_data.append(observations)
 
@@ -368,17 +379,43 @@ class MapNavigator:
         self.sim = sim
 
 
+    # def setupSensors(self):
+    #     mid_depth_sensor = habitat_sim.bindings.CameraSensorSpec()
+    #     mid_depth_sensor.uuid = "mid_depth"
+    #     mid_depth_sensor.resolution = [192, 320]
+    #     mid_depth_sensor.position = 1.5 * habitat_sim.geo.UP
+    #     mid_depth_sensor.orientation = [0., 0., 0.]
+    #     mid_depth_sensor.sensor_type = habitat_sim.SensorType.DEPTH
+    #     mid_depth_sensor.hfov = 150
+
+    #     return [mid_depth_sensor]
+
     def setupSensors(self):
+        left_depth_sensor = habitat_sim.bindings.CameraSensorSpec()
+        left_depth_sensor.uuid = "left_depth"
+        left_depth_sensor.resolution = [180, 270]
+        left_depth_sensor.position = 1.0 * habitat_sim.geo.UP + 0.13 * habitat_sim.geo.LEFT + 0.04 * habitat_sim.geo.BACK
+        left_depth_sensor.orientation = [0., 0.522268, 0.]
+        left_depth_sensor.sensor_type = habitat_sim.SensorType.DEPTH
+        left_depth_sensor.hfov = 87
+
         mid_depth_sensor = habitat_sim.bindings.CameraSensorSpec()
         mid_depth_sensor.uuid = "mid_depth"
-        mid_depth_sensor.resolution = [192, 320]
-        mid_depth_sensor.position = 1.5 * habitat_sim.geo.UP
+        mid_depth_sensor.resolution = [180, 270]
+        mid_depth_sensor.position = 1.0 * habitat_sim.geo.UP
         mid_depth_sensor.orientation = [0., 0., 0.]
         mid_depth_sensor.sensor_type = habitat_sim.SensorType.DEPTH
-        mid_depth_sensor.hfov = 150
+        mid_depth_sensor.hfov = 87
 
-        return [mid_depth_sensor]
+        right_depth_sensor = habitat_sim.bindings.CameraSensorSpec()
+        right_depth_sensor.uuid = "right_depth"
+        right_depth_sensor.resolution = [180, 270]
+        right_depth_sensor.position = 1.0 * habitat_sim.geo.UP + 0.13 * habitat_sim.geo.RIGHT + 0.04 * habitat_sim.geo.BACK
+        right_depth_sensor.orientation = [0., -0.522268, 0.]
+        right_depth_sensor.sensor_type = habitat_sim.SensorType.DEPTH
+        right_depth_sensor.hfov = 87
 
+        return [left_depth_sensor, mid_depth_sensor, right_depth_sensor]
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -387,11 +424,11 @@ if __name__ == "__main__":
                         # default="/data/home/joel/datasets/2d3ds/area3")
                         # default="/home/j/joell/datasets/bmapping_data/area3")
     parser.add_argument("--output_dir", type=str, help="Path to output directory",
-                        default="/Users/joel/Research/data/area6/test")
+                        default="/Users/joel/Research/data/area6/test_v2")
                         # default="/data/home/joel/datasets/blocal_data/area3")
                         # default="/home/j/joell/datasets/blocal_data/area3")
     parser.add_argument("--num_samples", type=int, help="Number of trajectories to sample",
-                        default=10)
+                        default=1)
     parser.add_argument("--random_seed", type=int, help="Change the random seed used for sampling",
                         default=42)
     parser.add_argument("--min_path_length", type=float, help="Minimum path length to use",

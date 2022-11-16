@@ -6,7 +6,7 @@ import os
 import argparse
 
 from models import *
-from datasets import GraphDataset, collate_graph_data
+from datasets import RosGraphDataset, collate_graph_data
 
 def train_model(args):
     print("=== Set up trainer")
@@ -26,7 +26,7 @@ def train_model(args):
     )
 
     print("=== Load data")
-    train_data = GraphDataset(args.dataset_dir)
+    train_data = RosGraphDataset(args.dataset_dir)
     train_loader = DataLoader(
         train_data, 
         batch_size=args.batch_size, 
@@ -35,14 +35,14 @@ def train_model(args):
         collate_fn=collate_graph_data
     )
 
-    val_data = GraphDataset(args.val_dataset_dir)
-    val_loader = DataLoader(
-        val_data,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=1,
-        collate_fn=collate_graph_data
-    )
+    # val_data = RosGraphDataset(args.val_dataset_dir)
+    # val_loader = DataLoader(
+    #     val_data,
+    #     batch_size=args.batch_size,
+    #     shuffle=False,
+    #     num_workers=1,
+    #     collate_fn=collate_graph_data
+    # )
 
     print("=== Instantiate model and train")
     pl.seed_everything(args.random_seed)
@@ -50,17 +50,18 @@ def train_model(args):
         args.n_graph_layers, 
         args.size_gn_feat, 
         args.size_init_global_feat,
-        input_image_stack_depth=20,
+        input_image_stack_depth=10,
         num_input_image_sensors=args.num_sensors,
         lr=args.lr
     )
 
-    trainer.fit(model, train_loader, val_loader)
+    # trainer.fit(model, train_loader, val_loader)
+    trainer.fit(model, train_loader)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_dir", type=str, help="Path to dataset",
-        default="/data/home/joel/datasets/blocal_data")
+        default="/data/home/joel/datasets/blocal_data/blocal_h5_smallsize")
     parser.add_argument("--val_dataset_dir", type=str, help="Path to validation dataset",
         default="/data/home/joel/datasets/blocal_val_data")
     parser.add_argument("--model_dir", type=str, help="Path to save models to",

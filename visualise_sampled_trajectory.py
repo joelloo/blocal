@@ -12,8 +12,10 @@ from structures import Intention, BehaviourGraph
 
 
 if __name__ == "__main__":
-    file_path = "/Users/joel/Research/data/area1/test/area1/t1.h5"
-    metadata_path = "/Users/joel/Research/data/area1"
+    # file_path = "/Users/joel/Research/data/area1/test/area1/t1.h5"
+    # metadata_path = "/Users/joel/Research/data/area1"
+    file_path = "/Users/joel/Research/data/area6/test_v2/t0.h5"
+    metadata_path = "/Users/joel/Research/data/area6"
     show_graph = True
 
     if show_graph:
@@ -69,9 +71,17 @@ if __name__ == "__main__":
             edge_idx = int(np.array(f[str(segment_idx) + '/edge_idx']))
             print(">>> Currently on edge: ", edge_idx)
             for im_idx in range(segment_cumlen_padded[segment_idx], segment_cumlen_padded[segment_idx+1]):
-                im = depth_ims[im_idx, :, :]
-                plt.imshow(im)
-                plt.title(str(im_idx) + ": " + str(segment_int))
+                # im = depth_ims[im_idx, :, :]
+                # plt.imshow(im)
+                # plt.title(str(im_idx) + ": " + str(segment_int))
+
+                fig, axs = plt.subplots(1, 3)
+                ims = depth_ims[im_idx, :, :, :]
+                print(ims[0])
+                axs[0].imshow(ims[0])
+                axs[1].imshow(ims[1])
+                axs[2].imshow(ims[2])
+                fig.suptitle(str(im_idx) + ": " + str(segment_int))
                 plt.show()
 
 

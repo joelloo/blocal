@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 import pytorch_lightning as pl
 
-from structures import Node, Intention
+from .structures import Node, Intention
 
 class EdgeBlock(nn.Module):
     """This module updates the edge attributes.
@@ -192,21 +192,51 @@ class CNNBlock(nn.Module):
     def __init__(self, in_channels, out_dim):
         super(CNNBlock, self).__init__()
 
-        # Input resolution: 320x240
-        self.conv1 = nn.Conv2d(in_channels=in_channels, out_channels=32, kernel_size=5, stride=2, padding=0)
-        self.conv1_bn = nn.BatchNorm2d(32)
-        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=5, stride=2, padding=0)
-        self.conv2_bn = nn.BatchNorm2d(64)
-        self.conv3 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=2, padding=0)
+        # # Input resolution: 320x240
+        # self.conv1 = nn.Conv2d(in_channels=in_channels, out_channels=32, kernel_size=5, stride=2, padding=0)
+        # self.conv1_bn = nn.BatchNorm2d(32)
+        # self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=5, stride=2, padding=0)
+        # self.conv2_bn = nn.BatchNorm2d(64)
+        # self.conv3 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=2, padding=0)
+        # self.conv3_bn = nn.BatchNorm2d(128)
+        # self.conv4 = nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=2, padding=0)
+        # self.conv4_bn = nn.BatchNorm2d(256)
+        # self.conv5 = nn.Conv2d(in_channels=256, out_channels=512, kernel_size=3, stride=2, padding=0)
+        # self.conv5_bn = nn.BatchNorm2d(512)
+        # self.conv6 = nn.Conv2d(in_channels=512, out_channels=512, kernel_size=3, stride=2, padding=0)
+        # self.conv6_bn = nn.BatchNorm2d(512)
+        # self.conv7 = nn.Conv2d(in_channels=512, out_channels=out_dim, kernel_size=(2, 3), stride=1, padding=0)
+
+        # # Input resolution: 320x192?
+        # self.conv1 = nn.Conv2d(in_channels=in_channels, out_channels=64, kernel_size=5, stride=2, padding=0)
+        # self.conv1_bn = nn.BatchNorm2d(64)
+        # self.conv2 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=5, stride=2, padding=0)
+        # self.conv2_bn = nn.BatchNorm2d(128)
+        # self.conv3 = nn.Conv2d(in_channels=128, out_channels=128, kernel_size=3, stride=2, padding=0)
+        # self.conv3_bn = nn.BatchNorm2d(128)
+        # self.conv4 = nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=2, padding=0)
+        # self.conv4_bn = nn.BatchNorm2d(256)
+        # self.conv5 = nn.Conv2d(in_channels=256, out_channels=512, kernel_size=3, stride=2, padding=0)
+        # self.conv5_bn = nn.BatchNorm2d(512)
+        # self.conv6 = nn.Conv2d(in_channels=512, out_channels=512, kernel_size=3, stride=2, padding=0)
+        # self.conv6_bn = nn.BatchNorm2d(512)
+        # self.conv7 = nn.Conv2d(in_channels=512, out_channels=out_dim, kernel_size=(1, 3), stride=1, padding=0)
+
+        # Input resolution: 212x120?
+        self.conv1 = nn.Conv2d(in_channels=in_channels, out_channels=64, kernel_size=5, stride=2, padding=0)
+        self.conv1_bn = nn.BatchNorm2d(64)
+        self.conv2 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=5, stride=2, padding=0)
+        self.conv2_bn = nn.BatchNorm2d(128)
+        self.conv3 = nn.Conv2d(in_channels=128, out_channels=128, kernel_size=3, stride=2, padding=0)
         self.conv3_bn = nn.BatchNorm2d(128)
         self.conv4 = nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=2, padding=0)
         self.conv4_bn = nn.BatchNorm2d(256)
         self.conv5 = nn.Conv2d(in_channels=256, out_channels=512, kernel_size=3, stride=2, padding=0)
         self.conv5_bn = nn.BatchNorm2d(512)
-        self.conv6 = nn.Conv2d(in_channels=512, out_channels=512, kernel_size=3, stride=2, padding=0)
+        self.conv6 = nn.Conv2d(in_channels=512, out_channels=512, kernel_size=(2, 3), stride=1, padding=0)
         self.conv6_bn = nn.BatchNorm2d(512)
-        # self.conv7 = nn.Conv2d(in_channels=512, out_channels=out_dim, kernel_size=(2, 3), stride=1, padding=0)
         self.conv7 = nn.Conv2d(in_channels=512, out_channels=out_dim, kernel_size=(1, 3), stride=1, padding=0)
+
 
     def freeze_all_but_last_layer(self):
         print('--> Freezing the following CNNBlock parameters:')
@@ -250,6 +280,7 @@ class GLN(pl.LightningModule):
         gn_feat_size,
         input_global_feat_size,
         input_image_stack_depth,
+        num_input_image_sensors,
         lr=1e-4
     ):
         super().__init__()
@@ -258,7 +289,8 @@ class GLN(pl.LightningModule):
         self.num_layers = num_layers
         self.lr = lr
 
-        self.cnn_encoder = CNNBlock(in_channels=input_image_stack_depth, out_dim=input_global_feat_size)
+        cnn_input_channels = input_image_stack_depth * num_input_image_sensors
+        self.cnn_encoder = CNNBlock(in_channels=cnn_input_channels, out_dim=input_global_feat_size)
         self.node_embeddings = nn.Embedding(num_embeddings=len(Node),
                                             embedding_dim=gn_feat_size)
         self.edge_embeddings = nn.Embedding(num_embeddings=len(Intention),

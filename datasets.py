@@ -9,14 +9,9 @@ from tqdm import tqdm
 
 from structures import Intention, BehaviourGraph
 
-if sys.platform == "darwin":
-    import matplotlib
-    matplotlib.use('TkAgg')
-import matplotlib.pyplot as plt
-
 
 def collate_graph_data(batch):
-    # Prepare the metadata indices. This consists of the ground
+    # Prepare the metadata indices. This consists of the ground truth
     # edge index. For prediction, the metadata also includes
     # the point and segment idx to identify the data point.
     idxs = [gt for gt, _, _, _, _, _ in batch]
@@ -72,14 +67,20 @@ def collate_graph_data(batch):
         batch_edge_count_summed
     )
 
-def crop_graph(graph, edge_idx, add_noise, radius, get_orig_graph=False):
+def crop_graph(graph, edge_idx, add_noise, radius, get_orig_graph=False, noise_radius=1, rng=None):
     edge_src, edge_dst, _, _ = graph.graph_edges[edge_idx]
     centre_node = edge_src
     # centre_node = edge_dst
 
-    # Sample the centre node from among the neighbouring nodes of the ground truth edge
+    # Sample a new centre node using the noise_radius parameter
     if add_noise:
-        pass
+        if rng is None:
+            raise Exception("No RNG provided")
+        out_edges = graph.vertices[centre_node]['out_edges']
+        sampled_node_idx = rng.integers(len(out_edges) + 1) # Include the current centre_node in the draw
+        if sampled_node_idx < len(out_edges):
+            centre_node, _, _ = out_edges[sampled_node_idx]
+
 
     gt_edge_idx = None
     while gt_edge_idx is None:
@@ -141,6 +142,7 @@ class GraphTestDataset(Dataset):
 
         # Load the data
         print("Loading data: ", file)
+        import h5py
         with h5py.File(file, 'r') as f:
             segment_cumlen = f['segment_cumlen']
             segment_upper_bound = segment_cumlen
@@ -171,6 +173,8 @@ class GraphTestDataset(Dataset):
     def __getitem__(self, index):
         point_idx, depth_start_idx, depth_end_idx, segment_idx, graph_edge_idx = self.traj_data[index]
         depth_stack = self.depth_data[depth_start_idx:depth_end_idx]
+        depth_stack = depth_stack.view(-1, depth_stack.shape[2], depth_stack.shape[3])
+
 
         (subgraph_node_cats, 
         subgraph_edge_cats, 
@@ -213,6 +217,8 @@ class GraphDataset(Dataset):
 
         # Load the depth image data and edge indices
         print("Loading depth image data and edge indices")
+        import h5py
+
         self.depth_data = [[] for _ in self.dataset_keys]
         for dataset_idx, (dataset, file_keys) in enumerate(zip(self.dataset_keys, self.file_keys)):
             print("Loading ", dataset_idx, ": ", dataset)
@@ -229,7 +235,9 @@ class GraphDataset(Dataset):
 
     def __getitem__(self, index):
         dataset_idx, file_idx, _, _, im_idx, edge_idx = self.data_idxs[index]
-        depth_stack = self.depth_data[dataset_idx][file_idx][im_idx:im_idx+self.depth_stack_size, :, :]
+        # depth_stack = self.depth_data[dataset_idx][file_idx][im_idx:im_idx+self.depth_stack_size, :, :]
+        depth_stack = self.depth_data[dataset_idx][file_idx][im_idx:im_idx+self.depth_stack_size, :, :, :]
+        depth_stack = depth_stack.view(-1, depth_stack.shape[2], depth_stack.shape[3])
         subgraph_node_cats, subgraph_edge_cats, subgraph_edge_conns, graph_edge_conns, gt_edge_idx = self.cropGraph(dataset_idx, edge_idx)
 
         return (
@@ -242,20 +250,140 @@ class GraphDataset(Dataset):
             graph_edge_conns
         )
 
-    def cropGraph(self, dataset_idx, edge_idx, add_noise=True, radius=3):
+    def cropGraph(self, dataset_idx, edge_idx, add_noise=False, radius=3):
         graph = self.graphs[dataset_idx]
         subgraph = crop_graph(graph, edge_idx, add_noise, radius)
         return subgraph
 
+class RosGraphDataset(Dataset):
+    def __init__(self, data_dir, add_noise=False):
+        self.add_noise = add_noise
+        self.rng = np.random.default_rng() if add_noise else None
+
+        # Load sampled and formatted data
+        print("Loading data keys")
+        tmp = np.load(os.path.join(data_dir, 'ros_formatted.npz'))
+        self.area_keys = tmp['area_keys']
+        self.file_keys = tmp['file_keys']
+        self.data_img_idxs = tmp['data_img_idxs']
+        self.data_labels = tmp['data_labels']
+        self.data_edge_idxs = tmp['data_edge_idxs']
+        self.data_file_descs = tmp['data_file_descs']
+        self.depth_stack_size = tmp['depth_stack_size']
+
+        # Load the behaviour graphs
+        print("Loading behaviour graphs")
+        self.graphs = [BehaviourGraph() for _ in range(len(self.area_keys))]
+        for dataset_name, graph in zip(self.area_keys, self.graphs):
+            graph.loadGraph(os.path.join(data_dir, dataset_name, 'behaviour_graph.json'))
+            graph.initialise()
+
+        # Load the depth image data and edge indices
+        print("Loading depth image data and edge indices")
+        import h5py
+
+        self.depth_data = [[] for _ in self.area_keys]
+        self.depth_timestamps = [[] for _ in self.area_keys]
+        for area_idx, (area, file_keys) in enumerate(zip(self.area_keys, self.file_keys)):
+            print("Loading ", area_idx, ": ", area)
+            for filename in tqdm(file_keys):
+                pathname = os.path.join(data_dir, area, filename)
+                with h5py.File(pathname, 'r') as f:
+                    np_depth_ims = np.array(f['combined_depth']).astype(np.float32) * 1e-3
+                    depth_ims = torch.from_numpy(np_depth_ims)
+                    self.depth_data[area_idx].append(depth_ims)
+                    self.depth_timestamps[area_idx].append(np.array(f['depth_timestamps']))
+
+        print("Dataset loaded!")
+
+    def __len__(self):
+        return len(self.data_labels)
+
+    def __getitem__(self, index):
+        area_idx, file_idx = self.data_file_descs[index]
+        img_idxs = self.data_img_idxs[index].tolist()[::-1]
+        edge_idx = self.data_edge_idxs[index]
+
+        # print(area_idx, file_idx, edge_idx)
+
+        depth_stack = self.depth_data[area_idx][file_idx][img_idxs]
+        depth_stack = depth_stack.view(-1, depth_stack.shape[2], depth_stack.shape[3])
+        subgraph_node_cats, subgraph_edge_cats, subgraph_edge_conns, graph_edge_conns, gt_edge_idx = self.cropGraph(area_idx, edge_idx)
+
+        # print(">>>>")
+        # np.set_printoptions(formatter={'all':lambda x: str(x)})
+        # print(self.depth_timestamps[area_idx][file_idx][img_idxs])
+        # print("<<<<")
+
+        # print(gt_edge_idx)
+        # print(subgraph_edge_conns)
+        # print(graph_edge_conns)
+
+        return (
+            gt_edge_idx,
+            # torch.LongTensor([area_idx, gt_edge_idx]),
+            depth_stack,
+            subgraph_node_cats,
+            subgraph_edge_cats,
+            subgraph_edge_conns,
+            graph_edge_conns
+        )
+
+    def cropGraph(self, area_idx, edge_idx, add_noise=True, radius=3):
+        graph = self.graphs[area_idx]
+        subgraph = crop_graph(graph, edge_idx, add_noise, radius, rng=self.rng)
+        return subgraph
+
+class RosGraphTestDataset(RosGraphDataset):
+    def __init__(self, data_dir):
+        super().__init__(data_dir)
+
+    def __len__(self):
+        return super().__len__()
+
+    def __getitem__(self, index):
+        area_idx, file_idx = self.data_file_descs[index]
+        img_idxs = self.data_img_idxs[index].tolist()[::-1]
+        edge_idx = self.data_edge_idxs[index]
+
+        depth_stack = self.depth_data[area_idx][file_idx][img_idxs]
+        depth_stack = depth_stack.view(-1, depth_stack.shape[2], depth_stack.shape[3])
+        subgraph_node_cats, subgraph_edge_cats, subgraph_edge_conns, graph_edge_conns, gt_edge_idx = self.cropGraph(area_idx, edge_idx)
+
+        gt_datum_idx = torch.LongTensor([edge_idx, gt_edge_idx, index])
+
+        return (
+            gt_datum_idx,
+            depth_stack,
+            subgraph_node_cats,
+            subgraph_edge_cats,
+            subgraph_edge_conns,
+            graph_edge_conns
+        )
+
+    def cropGraph(self, area_idx, edge_idx, add_noise=False, radius=3):
+        graph = self.graphs[area_idx]
+        subgraph = crop_graph(graph, edge_idx, add_noise, radius, get_orig_graph=True)
+        return subgraph
+
 
 # if __name__ == "__main__":
-#     data_dir = "/Users/joel/Research/data/test"
-#     batch_size = 2
+#     # data_dir = "/Users/joel/Research/data/test"
+#     data_dir = "/Users/joel/Research/data/ros_test/test_h5_v2"
+#     batch_size = 1
 #     n_train_workers = 1
 
-#     train_data = GraphDataset(data_dir)
+#     if sys.platform == "darwin":
+#         import matplotlib
+#         matplotlib.use('TkAgg')
+#     import matplotlib.pyplot as plt
+
+#     matplotlib.rc('image', cmap='jet')
+
+#     # train_data = GraphDataset(data_dir)
 #     # train_data = GraphTestDataset("/Users/joel/Research/data/test/area1/t0.h5", 
 #     #     "/Users/joel/Research/data/test/area1/behaviour_graph.json")
+#     train_data = RosGraphDataset(data_dir)
 #     train_loader = DataLoader(
 #         dataset=train_data, batch_size=batch_size, shuffle=True, 
 #         num_workers=n_train_workers, collate_fn=collate_graph_data
@@ -266,31 +394,138 @@ class GraphDataset(Dataset):
 #     print('Calling next')
 
 #     gt_edge_idxs, depth_stacks, (node_cats, edge_cats, edge_conns, node_idxs, edge_idxs), graph_edge_conns, summed = next(it)
-#     print(">>>>> gt_edge_idxs")
-#     print(gt_edge_idxs)
-#     print(">>>>> node_cats")
-#     print(node_cats)
-#     # print(">>>>> edge_cats")
-#     # print(edge_cats)
-#     # print(">>>>> edge_conns")
-#     # print(edge_conns)
-#     print(">>>>> node_idxs")
-#     print(node_idxs)
-#     # print(">>>>> edge_idxs")
-#     # print(edge_idxs)
-#     print(">>>>> graph_edges")
-#     print(torch.cat((edge_conns, graph_edge_conns), dim=1))
-#     print(">>>>> batch_summed")
-#     print(summed)
+# #     print(">>>>> gt_edge_idxs")
+# #     print(gt_edge_idxs)
+# #     print(">>>>> node_cats")
+# #     print(node_cats)
+# #     # print(">>>>> edge_cats")
+# #     # print(edge_cats)
+# #     # print(">>>>> edge_conns")
+# #     # print(edge_conns)
+# #     print(">>>>> node_idxs")
+# #     print(node_idxs)
+# #     # print(">>>>> edge_idxs")
+# #     # print(edge_idxs)
+# #     print(">>>>> graph_edges")
+# #     print(torch.cat((edge_conns, graph_edge_conns), dim=1))
+# #     print(">>>>> batch_summed")
+# #     print(summed)
 
-#     print("========")
-#     print(">>>>> ground truth edges")
-#     print(graph_edge_conns[gt_edge_idxs[:, 1], :])
-#     print(gt_edge_idxs[:, 0], train_data.dataset_keys)
+# #     print("========")
+# #     print(">>>>> ground truth edges")
+# #     print(graph_edge_conns[gt_edge_idxs[:, 1], :])
+# #     print(gt_edge_idxs[:, 0], train_data.dataset_keys)
 
-#     print('Done')
+# #     print('Done')
 
-#     for idx, im in enumerate(depth_stacks[0]):
-#         plt.imshow(im)
-#         plt.title(str(idx))
+#     print(depth_stacks.shape)
+#     print(gt_edge_idxs[0])
+#     print(train_data.graphs[0].graph_edges[gt_edge_idxs[0]])
+#     _, num_imgs, _, _ = depth_stacks.shape
+#     num_steps = int(num_imgs / 3)
+    
+#     for idx in range(num_steps):
+#         im_left = (depth_stacks[0, idx*3, :, :].numpy() * 1e3).astype(np.uint16)
+#         im_mid = (depth_stacks[0, idx*3+1, :, :].numpy() * 1e3).astype(np.uint16)
+#         im_right = (depth_stacks[0, idx*3+2, :, :].numpy() * 1e3).astype(np.uint16)
+
+#         fig, axs = plt.subplots(1, 3)
+#         fig.suptitle(str(idx))
+#         axs[0].imshow(im_left)
+#         axs[1].imshow(im_mid)
+#         axs[2].imshow(im_right)
+
 #         plt.show()
+# # #     print(node_idxs)
+# # #     # print(">>>>> edge_idxs")
+# # #     # print(edge_idxs)
+# # #     print(">>>>> graph_edges")
+# # #     print(torch.cat((edge_conns, graph_edge_conns), dim=1))
+# # #     print(">>>>> batch_summed")
+# # #     print(summed)
+
+# # #     print("========")
+# # #     print(">>>>> ground truth edges")
+# # #     print(graph_edge_conns[gt_edge_idxs[:, 1], :])
+# # #     print(gt_edge_idxs[:, 0], train_data.dataset_keys)
+
+# # #     print('Done')
+
+# #     print(depth_stacks.shape)
+# #     _, num_imgs, _, _ = depth_stacks.shape
+# #     num_steps = int(num_imgs / 3)
+    
+# #     for idx in range(num_steps):
+# #         im_left = depth_stacks[0, idx*3, :, :]
+# #         im_mid = depth_stacks[0, idx*3+1, :, :]
+# #         im_right = depth_stacks[0, idx*3+2, :, :]
+
+# #         fig, axs = plt.subplots(1, 3)
+# #         fig.suptitle(str(idx))
+# #         axs[0].imshow(im_left)
+# #         axs[1].imshow(im_mid)
+# #         axs[2].imshow(im_right)
+
+# #         plt.show()
+# # #     print(node_idxs)
+# # #     # print(">>>>> edge_idxs")
+# # #     # print(edge_idxs)
+# # #     print(">>>>> graph_edges")
+# # #     print(torch.cat((edge_conns, graph_edge_conns), dim=1))
+# # #     print(">>>>> batch_summed")
+# # #     print(summed)
+
+# # #     print("========")
+# # #     print(">>>>> ground truth edges")
+# # #     print(graph_edge_conns[gt_edge_idxs[:, 1], :])
+# # #     print(gt_edge_idxs[:, 0], train_data.dataset_keys)
+
+# # #     print('Done')
+
+# #     print(depth_stacks.shape)
+# #     _, num_imgs, _, _ = depth_stacks.shape
+# #     num_steps = int(num_imgs / 3)
+    
+# #     for idx in range(num_steps):
+# #         im_left = depth_stacks[0, idx*3, :, :]
+# #         im_mid = depth_stacks[0, idx*3+1, :, :]
+# #         im_right = depth_stacks[0, idx*3+2, :, :]
+
+# #         fig, axs = plt.subplots(1, 3)
+# #         fig.suptitle(str(idx))
+# #         axs[0].imshow(im_left)
+# #         axs[1].imshow(im_mid)
+# #         axs[2].imshow(im_right)
+
+# #         plt.show()
+# # #     print(node_idxs)
+# # #     # print(">>>>> edge_idxs")
+# # #     # print(edge_idxs)
+# # #     print(">>>>> graph_edges")
+# # #     print(torch.cat((edge_conns, graph_edge_conns), dim=1))
+# # #     print(">>>>> batch_summed")
+# # #     print(summed)
+
+# # #     print("========")
+# # #     print(">>>>> ground truth edges")
+# # #     print(graph_edge_conns[gt_edge_idxs[:, 1], :])
+# # #     print(gt_edge_idxs[:, 0], train_data.dataset_keys)
+
+# # #     print('Done')
+
+# #     print(depth_stacks.shape)
+# #     _, num_imgs, _, _ = depth_stacks.shape
+# #     num_steps = int(num_imgs / 3)
+    
+# #     for idx in range(num_steps):
+# #         im_left = depth_stacks[0, idx*3, :, :]
+# #         im_mid = depth_stacks[0, idx*3+1, :, :]
+# #         im_right = depth_stacks[0, idx*3+2, :, :]
+
+# #         fig, axs = plt.subplots(1, 3)
+# #         fig.suptitle(str(idx))
+# #         axs[0].imshow(im_left)
+# #         axs[1].imshow(im_mid)
+# #         axs[2].imshow(im_right)
+
+# #         plt.show()
