@@ -77,7 +77,6 @@ if __name__ == "__main__":
 
                 fig, axs = plt.subplots(1, 3)
                 ims = depth_ims[im_idx, :, :, :]
-                print(ims[0])
                 axs[0].imshow(ims[0])
                 axs[1].imshow(ims[1])
                 axs[2].imshow(ims[2])

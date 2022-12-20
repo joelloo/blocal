@@ -60,9 +60,9 @@ def train_model(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_dir", type=str, help="Path to dataset",
-        default="/data/home/joel/datasets/blocal_data")
+        default="/data/home/joel/datasets/blocal_data_x3")
     parser.add_argument("--val_dataset_dir", type=str, help="Path to validation dataset",
-        default="/data/home/joel/datasets/blocal_val_data")
+        default="/data/home/joel/datasets/blocal_testing/blocal_val_data_x3")
     parser.add_argument("--model_dir", type=str, help="Path to save models to",
         default="/data/home/joel/datasets/models")
     parser.add_argument("--log_dir", type=str, help="Path for logging",

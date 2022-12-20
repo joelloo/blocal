@@ -8,13 +8,13 @@ from structures import Intention
 from tqdm import tqdm
 
 if __name__ == "__main__":
-    data_dir = "/Users/joel/Research/data/test"
-    output_dir = "/Users/joel/Research/data/"
-    # data_dir = "/data/home/joel/datasets/blocal_data"
-    # output_dir = "/data/home/joel/datasets/blocal_data_formatted"
+    # data_dir = "/Users/joel/Research/data/test"
+    # output_dir = "/Users/joel/Research/data/"
+    data_dir = "/data/home/joel/datasets/blocal_data_x3"
+    output_dir = "/data/home/joel/datasets/blocal_data_formatted"
     depth_stack_size = 20
     only_counting = False
-    max_sample_count_per_behaviour = 100
+    max_sample_count_per_behaviour = None
 
     # First scan through the data to see how many valid instances we have
     behaviour_counts = [0 for i in range(len(Intention))]

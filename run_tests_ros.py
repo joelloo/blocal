@@ -57,7 +57,8 @@ def test_model(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--test_dir", type=str, help="Path to dataset",
-        default="/data/home/joel/datasets/blocal_data/blocal_h5_smallsize_val")
+        #default="/data/home/joel/datasets/blocal_data/blocal_h5_smallsize_val")
+        default="/data/home/joel/datasets/blocal_data/com1_basement_test")
     parser.add_argument("--depth_stack_size", type=int, help="Size of depth stack",
         default=10)
     parser.add_argument("--model_dir", type=str, help="Path to model to be tested",

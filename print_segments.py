@@ -13,7 +13,7 @@ if __name__ == "__main__":
     graph = BehaviourGraph()
     graph.loadGraph(os.path.join(args.directory, 'behaviour_graph.json'))
 
-    files = [file for file in os.listdir(args.directory) if file.endswith('h5')]
+    files = sorted([file for file in os.listdir(args.directory) if file.endswith('h5')])
     for file in files:
         with h5py.File(os.path.join(args.directory, file)) as hf:
             print(">>> ", file)

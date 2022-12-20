@@ -61,7 +61,7 @@ def train_model(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_dir", type=str, help="Path to dataset",
-        default="/data/home/joel/datasets/blocal_data/blocal_h5_smallsize")
+        default="/data/home/joel/datasets/blocal_data/blocal_h5_smallsize_cps")
     parser.add_argument("--val_dataset_dir", type=str, help="Path to validation dataset",
         default="/data/home/joel/datasets/blocal_val_data")
     parser.add_argument("--model_dir", type=str, help="Path to save models to",

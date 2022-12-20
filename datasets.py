@@ -266,7 +266,8 @@ class RosGraphDataset(Dataset):
         self.area_keys = tmp['area_keys']
         self.file_keys = tmp['file_keys']
         self.data_img_idxs = tmp['data_img_idxs']
-        self.data_labels = tmp['data_labels']
+        self.data_edge_int_labels = tmp['data_edge_int_labels']
+        self.data_changepoint_labels = tmp['data_changepoint_labels']
         self.data_edge_idxs = tmp['data_edge_idxs']
         self.data_file_descs = tmp['data_file_descs']
         self.depth_stack_size = tmp['depth_stack_size']
@@ -297,18 +298,19 @@ class RosGraphDataset(Dataset):
         print("Dataset loaded!")
 
     def __len__(self):
-        return len(self.data_labels)
+        return len(self.data_edge_int_labels)
 
     def __getitem__(self, index):
         area_idx, file_idx = self.data_file_descs[index]
         img_idxs = self.data_img_idxs[index].tolist()[::-1]
         edge_idx = self.data_edge_idxs[index]
+        changepoint_label = self.data_changepoint_labels[index]
 
         # print(area_idx, file_idx, edge_idx)
 
         depth_stack = self.depth_data[area_idx][file_idx][img_idxs]
         depth_stack = depth_stack.view(-1, depth_stack.shape[2], depth_stack.shape[3])
-        subgraph_node_cats, subgraph_edge_cats, subgraph_edge_conns, graph_edge_conns, gt_edge_idx = self.cropGraph(area_idx, edge_idx)
+        subgraph_node_cats, subgraph_edge_cats, subgraph_edge_conns, graph_edge_conns, gt_edge_idx = self.cropGraph(area_idx, edge_idx, self.add_noise)
 
         # print(">>>>")
         # np.set_printoptions(formatter={'all':lambda x: str(x)})
@@ -320,8 +322,9 @@ class RosGraphDataset(Dataset):
         # print(graph_edge_conns)
 
         return (
-            gt_edge_idx,
+            # gt_edge_idx,
             # torch.LongTensor([area_idx, gt_edge_idx]),
+            torch.LongTensor([changepoint_label, gt_edge_idx]),
             depth_stack,
             subgraph_node_cats,
             subgraph_edge_cats,
@@ -345,12 +348,13 @@ class RosGraphTestDataset(RosGraphDataset):
         area_idx, file_idx = self.data_file_descs[index]
         img_idxs = self.data_img_idxs[index].tolist()[::-1]
         edge_idx = self.data_edge_idxs[index]
+        changepoint_label = self.data_changepoint_labels[index]
 
         depth_stack = self.depth_data[area_idx][file_idx][img_idxs]
         depth_stack = depth_stack.view(-1, depth_stack.shape[2], depth_stack.shape[3])
         subgraph_node_cats, subgraph_edge_cats, subgraph_edge_conns, graph_edge_conns, gt_edge_idx = self.cropGraph(area_idx, edge_idx)
 
-        gt_datum_idx = torch.LongTensor([edge_idx, gt_edge_idx, index])
+        gt_datum_idx = torch.LongTensor([changepoint_label, edge_idx, gt_edge_idx, index])
 
         return (
             gt_datum_idx,
