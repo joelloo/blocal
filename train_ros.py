@@ -12,9 +12,9 @@ def train_model(args):
     print("=== Set up trainer")
     tb_logger = pl_loggers.TensorBoardLogger(save_dir=args.log_dir)
     ckpt_callback = pl_callbacks.ModelCheckpoint(
-        os.path.join(args.model_dir, 'ongoing'), 
+        os.path.join(args.model_dir, args.model_name), 
         save_top_k=-1,
-        every_n_epochs=5
+        every_n_epochs=3
     )
     trainer = pl.Trainer(
         accelerator='gpu', 
@@ -32,17 +32,18 @@ def train_model(args):
         batch_size=args.batch_size, 
         shuffle=True, 
         num_workers=args.num_workers,
-        collate_fn=collate_graph_data
+        collate_fn=collate_graph_data,
+        drop_last=True
     )
 
-    # val_data = RosGraphDataset(args.val_dataset_dir)
-    # val_loader = DataLoader(
-    #     val_data,
-    #     batch_size=args.batch_size,
-    #     shuffle=False,
-    #     num_workers=1,
-    #     collate_fn=collate_graph_data
-    # )
+    val_data = RosGraphDataset(args.val_dataset_dir)
+    val_loader = DataLoader(
+        val_data,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=1,
+        collate_fn=collate_graph_data
+    )
 
     print("=== Instantiate model and train")
     pl.seed_everything(args.random_seed)
@@ -55,17 +56,19 @@ def train_model(args):
         lr=args.lr
     )
 
-    # trainer.fit(model, train_loader, val_loader)
-    trainer.fit(model, train_loader)
+    trainer.fit(model, train_loader, val_loader)
+    # trainer.fit(model, train_loader)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_dir", type=str, help="Path to dataset",
-        default="/data/home/joel/datasets/blocal_data/blocal_h5_smallsize_cps")
+        default="/data/home/joel/datasets/blocal_data/blocal_odom_h5_train")
     parser.add_argument("--val_dataset_dir", type=str, help="Path to validation dataset",
-        default="/data/home/joel/datasets/blocal_val_data")
+        default="/data/home/joel/datasets/blocal_data/blocal_odom_h5_val")
     parser.add_argument("--model_dir", type=str, help="Path to save models to",
-        default="/data/home/joel/datasets/models")
+        default="/data/home/joel/datasets/models/gln")
+    parser.add_argument("--model_name", type=str, help="Name of model",
+        default="gln_edgehead_nonoise_v1")
     parser.add_argument("--log_dir", type=str, help="Path for logging",
         default="/data/home/joel/datasets/logs")
     parser.add_argument("--batch_size", type=int, help="Training batch size",

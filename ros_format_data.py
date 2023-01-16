@@ -4,8 +4,14 @@ import math
 import numpy as  np
 
 from structures import Intention
+from models import EDGE_DIST_CLASSES
 from tqdm import tqdm
 
+import sys
+if sys.platform == "darwin":
+    import matplotlib
+    matplotlib.use('TkAgg')
+import matplotlib.pyplot as plt
 
 class DataSampler():
 
@@ -15,8 +21,8 @@ class DataSampler():
         depth_sample_period_secs=0.5, 
         max_sample_count_per_behaviour=None,
         behaviour_sample_fraction=0.75,
-        changepoint_start_offset_secs=3.0,
-        changepoint_end_offset_secs=1.0,
+        use_changepoint_labels=True,
+        edge_class_dist_ranges=EDGE_DIST_CLASSES,
         keep_all_data=False,
         only_counting=False
         ):
@@ -24,8 +30,8 @@ class DataSampler():
         self.depth_sample_period_secs = depth_sample_period_secs
         self.max_sample_count_per_behaviour = max_sample_count_per_behaviour
         self.behaviour_sample_fraction = behaviour_sample_fraction
-        self.changepoint_start_offset_secs = changepoint_start_offset_secs
-        self.changepoint_end_offset_secs = changepoint_end_offset_secs
+        self.use_cp_labels = use_changepoint_labels
+        self.edge_class_dist_ranges = edge_class_dist_ranges
         self.only_counting = only_counting
         self.keep_all_data = keep_all_data
 
@@ -62,8 +68,34 @@ class DataSampler():
             depth_int_labels = np.array(f['depth_edge_int_labels'])
             depth_edge_idxs = np.array(f['depth_edge_idxs'])
             depth_segment_idxs = np.array(f['depth_segment_idxs'])
-            depth_changepoint_labels = np.array(f['depth_changepoint_labels'])
+            depth_positions = np.array(f['depth_positions'])
+            changepoint_poses = np.array(f['changepoint_poses'])
 
+            if self.use_cp_labels:
+                depth_changepoint_labels = np.array(f['depth_changepoint_labels'])
+            else:
+                depth_changepoint_labels = []
+                for seg_idx, pos in zip(depth_segment_idxs, depth_positions):
+                    if seg_idx < len(changepoint_poses):
+                        cp_pos = changepoint_poses[seg_idx]
+                        dist = np.linalg.norm(cp_pos - pos)
+                    else:
+                        dist = np.inf
+
+                    found = False
+                    for idx, (start, end) in enumerate(self.edge_class_dist_ranges):
+                        if start <= dist and dist < end:
+                            depth_changepoint_labels.append(idx)
+                            found = True
+                            break
+                        elif dist == np.inf:
+                            depth_changepoint_labels.append(len(self.edge_class_dist_ranges)-1)
+                            found = True
+                            break
+
+                    if not found:
+                        raise Exception("Dist ", dist, " not in any interval!")
+                            
             if segment_count == 0:
                 return None
 
@@ -82,6 +114,16 @@ class DataSampler():
                         changepoint_label, # Changepoint label
                         [area_idx, file_idx] # File descriptor
                     ))
+
+            fig, ax = plt.subplots(1, 1)
+            pose_colours = ['c' if label == 0 else 'k' for label in depth_changepoint_labels]
+            ax.scatter(depth_positions[:, 0], depth_positions[:, 1], c=pose_colours)
+            ax.scatter(changepoint_poses[:, 0], changepoint_poses[:, 1], marker='x')
+            ax.scatter(depth_positions[0, 0], depth_positions[0, 1], c='r', marker='o')
+            ax.scatter(depth_positions[-1, 0], depth_positions[-1, 1], c='g', marker='o')
+            ax.set_aspect('equal')
+            plt.savefig('dist_ims/' + str(area_idx) + '_' + str(file_idx) + '.png')
+            plt.close()
             
             return valid_samples
     
@@ -178,10 +220,16 @@ if __name__ == "__main__":
     # data_dir = "/data/home/joel/datasets/blocal_data/test_h5"
     # data_dir = "/Users/joel/Research/data/ros_test/test_h5_v2"
     # data_dir = "/data/home/joel/datasets/blocal_data/blocal_h5_data/"
-    data_dir = "/data/home/joel/datasets/blocal_data/blocal_h5_smallsize_cps"
+    # data_dir = "/data/home/joel/datasets/blocal_data/blocal_h5_smallsize_cps"
     # data_dir = "/data/home/joel/datasets/blocal_data/com1_basement_test"
+    # data_dir = "/data/home/joel/datasets/blocal_data/blocal_odom_h5_train"
+    data_dir = "/data/home/joel/datasets/blocal_data/blocal_odom_h5_test"
 
     # sampler = DataSampler(keep_all_data=True)
     # sampler = DataSampler()
-    sampler = DataSampler(behaviour_sample_fraction=0.9)
+    sampler = DataSampler(
+        behaviour_sample_fraction=0.92,
+        # keep_all_data=True,
+        use_changepoint_labels=False
+    )
     sampler.process_dataset(data_dir)

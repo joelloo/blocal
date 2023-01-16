@@ -228,7 +228,7 @@ class GraphDataset(Dataset):
                     depth_ims = torch.from_numpy(np.array(f['combined_depth']))
                     self.depth_data[dataset_idx].append(depth_ims)
 
-        print("Dataset loaded!")
+        print("Dataset loaded! Size: ", len(self.data_idxs))
 
     def __len__(self):
         return len(self.data_idxs)
@@ -295,7 +295,7 @@ class RosGraphDataset(Dataset):
                     self.depth_data[area_idx].append(depth_ims)
                     self.depth_timestamps[area_idx].append(np.array(f['depth_timestamps']))
 
-        print("Dataset loaded!")
+        print("Dataset loaded! Size: ", len(self.data_edge_int_labels))
 
     def __len__(self):
         return len(self.data_edge_int_labels)

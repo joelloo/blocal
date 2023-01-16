@@ -5,7 +5,29 @@ import torch.nn.functional as F
 
 import pytorch_lightning as pl
 
-from .structures import Node, Intention
+from structures import Node, Intention
+
+EDGE_DIST_CLASSES = [(0, 1), (1, torch.inf)]
+
+class EdgeHead(nn.Module):
+    """This module converts the edge attributes to outputs.
+    """ 
+
+    def __init__(self, in_edge_feat_size, out_edge_feat_size):
+        super(EdgeHead, self).__init__()
+        self.f_h = nn.Sequential(
+            nn.Linear(in_edge_feat_size, 128),
+            nn.BatchNorm1d(num_features=128),
+            nn.ReLU(),
+            nn.Linear(128, 32),
+            nn.BatchNorm1d(num_features=32),
+            nn.ReLU(),
+            nn.Linear(32, out_edge_feat_size)
+        )
+
+    def forward(self, x):
+        return self.f_h(x)
+
 
 class EdgeBlock(nn.Module):
     """This module updates the edge attributes.
@@ -29,6 +51,7 @@ class EdgeBlock(nn.Module):
         x = F.relu(self.fc2_bn(self.fc2(x)))
         x = F.relu(self.fc3_bn(self.fc3(x)))
         x = self.fc4(x)
+        
         return x
 
 
@@ -92,7 +115,7 @@ class GNBlock(nn.Module):
     """
 
     def __init__(self, global_feat_size, node_feat_size, edge_feat_size, out_global_feat_size,
-                 out_node_feat_size, out_edge_feat_size, aggregate_method='sum'):
+                 out_node_feat_size, out_edge_feat_size, aggregate_method='sum', edge_dist_num_classes=None):
         """Constructor.
         Args:
             global_feat_size: Dimension of global features input to the GNBlock.
@@ -112,13 +135,22 @@ class GNBlock(nn.Module):
         self.out_global_feat_size = out_global_feat_size
         assert (self.aggregate_method == 'sum') or (self.aggregate_method == 'avg')
 
-        self.edge_block = EdgeBlock(self.global_feat_size, self.node_feat_size, self.edge_feat_size,
-                                    out_edge_feat_size)
-        self.node_block = NodeBlock(self.global_feat_size, self.node_feat_size, out_edge_feat_size,
-                                    out_node_feat_size)
         if self.out_global_feat_size is not None:
+            self.edge_block = EdgeBlock(self.global_feat_size, self.node_feat_size, 
+                                        self.edge_feat_size, out_edge_feat_size)
+            self.node_block = NodeBlock(self.global_feat_size, self.node_feat_size, 
+                                        out_edge_feat_size, out_node_feat_size)
             self.global_block = GlobalBlock(self.global_feat_size, out_node_feat_size,
                                             out_edge_feat_size, self.out_global_feat_size)
+        else:
+            assert edge_dist_num_classes is not None
+            self.edge_block = EdgeBlock(self.global_feat_size, self.node_feat_size,
+                                        self.edge_feat_size, self.edge_feat_size)
+            self.node_block = NodeBlock(self.global_feat_size, self.node_feat_size,
+                                        self.edge_feat_size, out_node_feat_size)
+
+            self.edge_localize_head = EdgeHead(self.edge_feat_size, 1)
+            self.edge_distance_head = EdgeHead(self.edge_feat_size, edge_dist_num_classes)
 
     def _forward_batch(subgraph_batch, image_stack):
         """Forward pass a batch. Try to do this efficiently by computing a single pass through each
@@ -183,6 +215,14 @@ class GNBlock(nn.Module):
             global_block_input = torch.cat([global_features, aggregated_node_features_per_graph,
                                             aggregated_edge_features_per_graph], dim=1)
             new_global_features = self.global_block(global_block_input)
+
+        # Generate multi-head output from the edge features if
+        # out_global_feat_size is None (i.e. there is no global
+        # block because this is the last GN layer)
+        if self.out_global_feat_size is None:
+            localize_output = self.edge_localize_head(new_edge_features)
+            distance_output = self.edge_distance_head(new_edge_features)
+            new_edge_features = [localize_output, distance_output]
 
         return new_global_features, new_node_features, new_edge_features
 
@@ -281,13 +321,17 @@ class GLN(pl.LightningModule):
         input_global_feat_size,
         input_image_stack_depth,
         num_input_image_sensors,
-        lr=1e-4
+        lr=1e-4,
+        edge_dist_classes=EDGE_DIST_CLASSES,
+        dist_loss_scale=10.0
     ):
         super().__init__()
         self.save_hyperparameters()
 
         self.num_layers = num_layers
         self.lr = lr
+        self.edge_dist_classes = edge_dist_classes
+        self.dist_loss_scale = dist_loss_scale
 
         cnn_input_channels = input_image_stack_depth * num_input_image_sensors
         self.cnn_encoder = CNNBlock(in_channels=cnn_input_channels, out_dim=input_global_feat_size)
@@ -310,7 +354,8 @@ class GLN(pl.LightningModule):
                 gn_block = GNBlock(
                     global_feat_size=gn_feat_size, node_feat_size=gn_feat_size,
                     edge_feat_size=gn_feat_size, out_global_feat_size=None,
-                    out_node_feat_size=1, out_edge_feat_size=1
+                    out_node_feat_size=1, out_edge_feat_size=1, 
+                    edge_dist_num_classes=len(self.edge_dist_classes)
                 )
             else:
                 gn_block = GNBlock(*[gn_feat_size for i in range])
@@ -342,32 +387,58 @@ class GLN(pl.LightningModule):
         opt = optim.Adam(self.parameters(), lr=self.lr)
         return opt
 
-    def edge_cross_entropy(self, input, target, batch_edge_count_summed):
+    def edge_cross_entropy(self, inp, target, batch_edge_count_summed):
         batch_size = len(batch_edge_count_summed) - 1
         losses = torch.empty(batch_size, dtype=torch.float32, device=self.device)
 
         for idx in range(batch_size):
             start_idx = batch_edge_count_summed[idx]
             end_idx = batch_edge_count_summed[idx+1]
-            class_vec = input[start_idx:end_idx]
+            class_vec = inp[start_idx:end_idx]
             losses[idx] = -class_vec[target[idx]] + torch.log(torch.sum(torch.exp(class_vec)))
         
         averaged = torch.mean(losses)
         return averaged
 
-    def edge_softmax(self, input, batch_edge_count_summed):
+    def edge_softmax(self, inp, batch_edge_count_summed):
         batch_size = len(batch_edge_count_summed) - 1
-        edge_probs = torch.empty(input.shape, dtype=torch.float32, device=self.device)
+        edge_probs = torch.empty(inp.shape, dtype=torch.float32, device=self.device)
 
         for idx in range(batch_size):
             start_idx = batch_edge_count_summed[idx]
             end_idx = batch_edge_count_summed[idx+1]
-            class_vec = input[start_idx:end_idx]
+            class_vec = inp[start_idx:end_idx]
 
             normalizer = torch.log(torch.sum(torch.exp(class_vec)))
             edge_probs[start_idx:end_idx, :] = torch.exp(class_vec - normalizer)
 
         return edge_probs
+
+    def dist_cross_entropy(self, inp, dist_target, loc_target, batch_edge_count_summed):
+        # Compute the indices of the ground truth edges for each sample
+        # (aka behaviour graph) in the batch.
+        offset_idxs = batch_edge_count_summed[:-1] + loc_target
+
+        # Extract the classifications for the ground truth edges
+        preds = inp[offset_idxs, :]
+
+        # Compute the cross-entropy loss
+        loss = F.cross_entropy(preds, dist_target)
+        return loss
+
+    def dist_softmax(self, inp, edge_probs, batch_edge_count_summed):
+        batch_size = len(batch_edge_count_summed) - 1
+        dist_probs = torch.empty((batch_size, inp.shape[1]), dtype=torch.float32, device=self.device)
+        best_edges = torch.empty(batch_size, dtype=torch.int, device=self.device)
+
+        for idx in range(batch_size):
+            start_idx = batch_edge_count_summed[idx]
+            end_idx = batch_edge_count_summed[idx+1]
+            best_edge_idx = torch.argmax(edge_probs[start_idx:end_idx])
+            dist_probs[idx] = inp[start_idx + best_edge_idx]
+            best_edges[idx] = best_edge_idx
+
+        return F.softmax(dist_probs, dim=1), best_edges
 
     def training_step(self, batch, batch_idx):
         target, image_stack, input_graph, _, batch_edge_count_summed = batch
@@ -375,11 +446,21 @@ class GLN(pl.LightningModule):
         _, _, edge_feats = self.forward(image_stack, input_graph)
 
         # Compute loss
-        loss = self.edge_cross_entropy(edge_feats, target, batch_edge_count_summed)
+        if type(edge_feats) is list:
+            loc_out, dist_out = edge_feats
+            loc_target = target[:, 1]
+            loc_loss = self.edge_cross_entropy(loc_out, loc_target, batch_edge_count_summed)
+            dist_target = target[:, 0]
+            dist_loss = self.dist_loss_scale * self.dist_cross_entropy(
+                dist_out, dist_target, loc_target, batch_edge_count_summed)
+            loss = loc_loss + dist_loss
+            self.log("train_loc_loss", loc_loss, on_step=True, on_epoch=True, prog_bar=False, logger=True, batch_size=batch_size)
+            self.log("train_dist_loss", dist_loss, on_step=True, on_epoch=True, prog_bar=False, logger=True, batch_size=batch_size)
+
+        else:
+            loss = self.edge_cross_entropy(edge_feats, target, batch_edge_count_summed)
         
         self.log("train_loss_step", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=batch_size)
-        # self.log("train_loss_step", loss, on_step=True, on_epoch=False, prog_bar=False, logger=True, batch_size=batch_size)
-        # self.log("train_loss_epoch", loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, batch_size=batch_size)
         return loss
 
     def predict_step(self, batch, batch_idx):
@@ -390,20 +471,44 @@ class GLN(pl.LightningModule):
             image_stack, input_graph, batch_edge_count_summed = batch
 
         _, _, edge_feats = self.forward(image_stack, input_graph)
-        edge_probs = self.edge_softmax(edge_feats, batch_edge_count_summed)
 
-        if len(batch) == 5:
-            target, _, _, graph_edge_conns, _ = batch
-            return target, graph_edge_conns, edge_probs, batch_edge_count_summed
+        if type(edge_feats) is list:
+            loc_out, dist_out = edge_feats
+            edge_probs = self.edge_softmax(loc_out, batch_edge_count_summed)
+            dist_probs, best_edges = self.dist_softmax(dist_out, edge_probs, batch_edge_count_summed)
+
+            if len(batch) == 5:
+                target, _, _, graph_edge_conns, _ = batch
+                return target, graph_edge_conns, edge_probs, dist_probs, batch_edge_count_summed
+            else:
+                return edge_probs, dist_probs, batch_edge_count_summed
+
         else:
-            return edge_probs, batch_edge_count_summed
+            edge_probs = self.edge_softmax(edge_feats, batch_edge_count_summed)
+
+            if len(batch) == 5:
+                target, _, _, graph_edge_conns, _ = batch
+                return target, graph_edge_conns, edge_probs, batch_edge_count_summed
+            else:
+                return edge_probs, batch_edge_count_summed
 
     def test_step(self, batch, batch_idx):
         target, image_stack, input_graph, _, batch_edge_count_summed = batch
         _, _, edge_feats = self.forward(image_stack, input_graph)
 
         # Compute loss
-        loss = self.edge_cross_entropy(edge_feats, target, batch_edge_count_summed)
+        if type(edge_feats) is list:
+            loc_out, dist_out = edge_feats
+            loc_target = target[:, 1]
+            loc_loss = self.edge_cross_entropy(loc_out, loc_target, batch_edge_count_summed)
+            dist_target = target[:, 0]
+            dist_loss = self.dist_loss_scale * self.dist_cross_entropy(
+                dist_out, dist_target, loc_target, batch_edge_count_summed)
+            loss = loc_loss + dist_loss
+
+        else:
+            loss = self.edge_cross_entropy(edge_feats, target, batch_edge_count_summed)
+
         return loss        
 
     def validation_step(self, batch, batch_idx):
@@ -412,7 +517,29 @@ class GLN(pl.LightningModule):
         _, _, edge_feats = self.forward(image_stack, input_graph)
 
         # Compute loss
-        loss = self.edge_cross_entropy(edge_feats, target, batch_edge_count_summed)
+        if type(edge_feats) is list:
+            loc_out, dist_out = edge_feats
+            loc_target = target[:, 1]
+            loc_loss = self.edge_cross_entropy(loc_out, loc_target, batch_edge_count_summed)
+            dist_target = target[:, 0]
+            dist_loss = self.dist_loss_scale * self.dist_cross_entropy(
+                dist_out, dist_target, loc_target, batch_edge_count_summed)
+            loss = loc_loss + dist_loss
+            self.log("val_loc_loss", loc_loss, on_step=True, on_epoch=True, prog_bar=False, logger=True, batch_size=batch_size)
+            self.log("val_dist_loss", dist_loss, on_step=True, on_epoch=True, prog_bar=False, logger=True, batch_size=batch_size)
 
+        else:
+            loss = self.edge_cross_entropy(edge_feats, target, batch_edge_count_summed)
+
+        # Compute dist cross entropy loss based on network's predicted edge
+        if type(edge_feats) is list:
+            loc_out, dist_out = edge_feats
+            edge_probs = self.edge_softmax(loc_out, batch_edge_count_summed)
+            dist_probs, best_edges = self.dist_softmax(dist_out, edge_probs, batch_edge_count_summed)
+            pred_edge_dist_loss = self.dist_cross_entropy(dist_out, target[:, 0], best_edges, batch_edge_count_summed)
+            self.log("val_predicted_dist_loss", pred_edge_dist_loss, on_step=False, 
+                on_epoch=True, prog_bar=False, logger=True, batch_size=batch_size
+            )
+            
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, batch_size=batch_size)
         return loss

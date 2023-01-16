@@ -13,8 +13,9 @@ from datasets import RosGraphTestDataset, collate_graph_data
 def parse_predictions(predictions):
     accum_targets = []
     accum_edge_output = []
+    accum_dist_probs = []
     for batch in predictions:
-        targets, graph_edge_conns, edge_prob_list, edge_count_summed_list = batch
+        targets, graph_edge_conns, edge_prob_list, dist_prob_list, edge_count_summed_list = batch
         targets = targets.numpy()
         edge_count_summed_list = edge_count_summed_list.numpy()
         uppers = edge_count_summed_list[1:]
@@ -26,9 +27,13 @@ def parse_predictions(predictions):
             accum_targets.append(target.tolist())
             accum_edge_output.append(subgraph_edge_data.tolist())
 
+        for idx in range(len(targets)):
+            accum_dist_probs.append(dist_prob_list[idx].tolist())
+
     file_data_map = {
         'targets': accum_targets,
-        'subgraph_edge_output': accum_edge_output
+        'subgraph_edge_output': accum_edge_output,
+        'dist_probs': accum_dist_probs
     }
 
     return file_data_map
@@ -57,12 +62,14 @@ def test_model(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--test_dir", type=str, help="Path to dataset",
-        #default="/data/home/joel/datasets/blocal_data/blocal_h5_smallsize_val")
-        default="/data/home/joel/datasets/blocal_data/com1_basement_test")
+        # default="/data/home/joel/datasets/blocal_data/blocal_h5_smallsize_val")
+        # default="/data/home/joel/datasets/blocal_data/com1_basement_test")
+        default="/data/home/joel/datasets/blocal_data/blocal_odom_h5_test")
     parser.add_argument("--depth_stack_size", type=int, help="Size of depth stack",
         default=10)
     parser.add_argument("--model_dir", type=str, help="Path to model to be tested",
-        default="/data/home/joel/datasets/models/gln_rw/e24_nonoise.ckpt")
+        # default="/data/home/joel/datasets/models/gln_rw/e24_nonoise.ckpt")
+        default="/data/home/joel/datasets/models/gln/gln_edgehead_nonoise_v1/epoch=197-step=73260.ckpt")
     parser.add_argument("--batch_size", type=str, help="Batch size for inference",
         default=8)
     args = parser.parse_args()
