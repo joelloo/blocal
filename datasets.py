@@ -67,20 +67,17 @@ def collate_graph_data(batch):
         batch_edge_count_summed
     )
 
-def crop_graph(graph, edge_idx, add_noise, radius, get_orig_graph=False, noise_radius=1, rng=None):
+def crop_graph(graph, edge_idx, add_noise, radius, get_orig_graph=False, noise_radius=1):
     edge_src, edge_dst, _, _ = graph.graph_edges[edge_idx]
     centre_node = edge_src
     # centre_node = edge_dst
 
-    # Sample a new centre node using the noise_radius parameter
+    # Sample a new centre node using the noise_radius parameter (current hard-coded noise radius of 1)
     if add_noise:
-        if rng is None:
-            raise Exception("No RNG provided")
         out_edges = graph.vertices[centre_node]['out_edges']
-        sampled_node_idx = rng.integers(len(out_edges) + 1) # Include the current centre_node in the draw
+        sampled_node_idx = torch.randint(len(out_edge) + 1, (1,)) # Include the current centre_node in the draw
         if sampled_node_idx < len(out_edges):
             centre_node, _, _ = out_edges[sampled_node_idx]
-
 
     gt_edge_idx = None
     while gt_edge_idx is None:
@@ -258,7 +255,6 @@ class GraphDataset(Dataset):
 class RosGraphDataset(Dataset):
     def __init__(self, data_dir, add_noise=False):
         self.add_noise = add_noise
-        self.rng = np.random.default_rng() if add_noise else None
 
         # Load sampled and formatted data
         print("Loading data keys")
@@ -334,7 +330,7 @@ class RosGraphDataset(Dataset):
 
     def cropGraph(self, area_idx, edge_idx, add_noise=True, radius=3):
         graph = self.graphs[area_idx]
-        subgraph = crop_graph(graph, edge_idx, add_noise, radius, rng=self.rng)
+        subgraph = crop_graph(graph, edge_idx, add_noise, radius)
         return subgraph
 
 class RosGraphTestDataset(RosGraphDataset):

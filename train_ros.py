@@ -10,7 +10,12 @@ from datasets import RosGraphDataset, collate_graph_data
 
 def train_model(args):
     print("=== Set up trainer")
-    tb_logger = pl_loggers.TensorBoardLogger(save_dir=args.log_dir)
+    tb_logger = pl_loggers.TensorBoardLogger(
+        save_dir=args.log_dir,
+        name='gln',
+        version=args.model_name
+    )
+
     ckpt_callback = pl_callbacks.ModelCheckpoint(
         os.path.join(args.model_dir, args.model_name), 
         save_top_k=-1,
@@ -26,7 +31,7 @@ def train_model(args):
     )
 
     print("=== Load data")
-    train_data = RosGraphDataset(args.dataset_dir)
+    train_data = RosGraphDataset(args.dataset_dir, add_noise=True)
     train_loader = DataLoader(
         train_data, 
         batch_size=args.batch_size, 
@@ -53,7 +58,8 @@ def train_model(args):
         args.size_init_global_feat,
         input_image_stack_depth=10,
         num_input_image_sensors=args.num_sensors,
-        lr=args.lr
+        lr=args.lr,
+        misc_hparams=args
     )
 
     trainer.fit(model, train_loader, val_loader)

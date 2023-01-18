@@ -323,7 +323,8 @@ class GLN(pl.LightningModule):
         num_input_image_sensors,
         lr=1e-4,
         edge_dist_classes=EDGE_DIST_CLASSES,
-        dist_loss_scale=10.0
+        dist_loss_scale=10.0,
+        misc_hparams=None
     ):
         super().__init__()
         self.save_hyperparameters()
