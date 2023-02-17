@@ -15,6 +15,16 @@ class Intention(IntEnum):
     FORWARD = 1
     RIGHT = 2
 
+def flipIntention(intention):
+    if intention == Intention.LEFT:
+        return Intention.RIGHT
+    elif intention == Intention.FORWARD:
+        return Intention.FORWARD
+    elif intention == Intention.RIGHT:
+        return Intention.LEFT
+    else:
+        raise NotImplementedError
+
 class BehaviourGraph:
     def __init__(self, scene_dir=""):
         self.scene_dir = scene_dir

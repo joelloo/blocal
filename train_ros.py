@@ -31,7 +31,14 @@ def train_model(args):
     )
 
     print("=== Load data")
-    train_data = RosGraphDataset(args.dataset_dir, add_noise=True)
+    print("Using augmentation probabilities: ", args.augment_probs)
+    print("Adding noise: ", args.perturb_centre)
+
+    augment_probs = None if args.augment_probs is None else torch.Tensor(args.augment_probs)
+    train_data = RosGraphDataset(
+        args.dataset_dir, add_noise=args.perturb_centre, 
+        augment_probs=augment_probs
+    )
     train_loader = DataLoader(
         train_data, 
         batch_size=args.batch_size, 
@@ -41,7 +48,8 @@ def train_model(args):
         drop_last=True
     )
 
-    val_data = RosGraphDataset(args.val_dataset_dir)
+    val_data = RosGraphDataset(args.val_dataset_dir, 
+        add_noise=False, augment_probs=None)
     val_loader = DataLoader(
         val_data,
         batch_size=args.batch_size,
@@ -74,13 +82,20 @@ if __name__ == "__main__":
     parser.add_argument("--model_dir", type=str, help="Path to save models to",
         default="/data/home/joel/datasets/models/gln")
     parser.add_argument("--model_name", type=str, help="Name of model",
-        default="gln_edgehead_nonoise_v1")
+        # default="gln_edgehead_nonoise_v1")
+        default="gln_edgehead_augment_nonoise_v3")
     parser.add_argument("--log_dir", type=str, help="Path for logging",
         default="/data/home/joel/datasets/logs")
     parser.add_argument("--batch_size", type=int, help="Training batch size",
         default=32)
     parser.add_argument("--max_epochs", type=int, help="Training max epochs",
         default=200)
+    parser.add_argument("--augment_probs", type=list, help="Augmentation probs (No augment, Add, Drop)",
+        default=[0.5, 0.5/3, 0.5/3, 0.5/3])
+        # default=[1.0, 0.0, 0.0])
+        # default=None)
+    parser.add_argument("--perturb_centre", type=bool, help="Add noise by perturbing the graph location",
+        default=False)
     parser.add_argument("--lr", type=float, help="Learning rate",
         default=1e-4)
     parser.add_argument("--n_graph_layers", type=int, help="Number of GN blocks",
@@ -92,7 +107,7 @@ if __name__ == "__main__":
     parser.add_argument("--random_seed", type=int, help="Random seed",
         default=0)
     parser.add_argument("--num_workers", type=int, help="Number of workers",
-        default=8)
+        default=16)
     parser.add_argument("--num_sensors", type=int, help="Number of sensors used at each timestep",
         default=3)
     args = parser.parse_args()
